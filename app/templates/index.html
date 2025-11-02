@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Document Search</title>
+  <style>
+    :root{color-scheme:dark}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;background:#000;color:#fff}
+    .center{min-height:100dvh;display:flex;align-items:center;justify-content:center}
+    .upload-card{border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:48px 64px;text-align:center;background:rgba(255,255,255,.04);box-shadow:0 10px 30px rgba(0,0,0,.4)}
+    .upload-btn{background:#4CAF50;border:none;cursor:pointer;color:#fff;padding:10px 20px;border-radius:6px}
+    .container{max-width:1100px;margin:24px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:1fr 2fr;gap:16px}
+    .card{background:#0b0b0b;border:1px solid #2a2a2a;border-radius:16px}
+    .card h2{margin:0;padding:16px;border-bottom:1px solid #2a2a2a;font-size:16px}
+    .card .content{padding:16px}
+    .meta{color:#aaa;font-size:12px;margin-top:8px}
+    .scroll{max-height:70vh;overflow:auto;white-space:pre-wrap;word-wrap:break-word}
+    .chat{display:flex;flex-direction:column;gap:12px}
+    .chat-window{max-height:70vh;overflow:auto;border:1px solid #2a2a2a;border-radius:12px;padding:12px;background:#000}
+    .bubble{max-width:80%;padding:10px 12px;border-radius:14px;margin:6px 0;font-size:14px}
+    .user{align-self:flex-end;background:#fff;color:#000}
+    .bot{align-self:flex-start;background:#1f1f1f;color:#fff}
+    .row{display:flex;gap:8px;margin-top:8px}
+    input[type=text]{flex:1;padding:12px;border-radius:10px;border:1px solid #2a2a2a;background:#000;color:#fff}
+    button.primary{padding:12px 16px;border-radius:10px;border:none;background:#4CAF50;color:#fff;font-weight:600;cursor:pointer}
+    .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .link{color:#fff;text-decoration:underline;cursor:pointer}
+    .spinner{border:4px solid #f3f3f3;border-top:4px solid #4CAF50;border-radius:50%;width:28px;height:28px;animation:spin 1s linear infinite;display:inline-block;margin:8px auto}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .hidden{display:none}
+    .flash{background:#333;padding:10px 14px;border-radius:6px;margin:10px 0;color:#fff}
+  </style>
+</head>
+
+<script>
+(function () {
+  const grid = document.getElementById("viewer-grid");
+  const splitter = document.getElementById("splitter");
+  const leftPanel = document.getElementById("left-panel");
+  const rightPanel = document.getElementById("right-panel");
+
+  if (!grid || !splitter || !leftPanel || !rightPanel) return;
+
+  const STORAGE_KEY = "ai_doc_split_left_width";
+
+  // restore saved width if present
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    // saved is pixel width for left column
+    grid.style.gridTemplateColumns = `${saved}px 12px 1fr`;
+  }
+
+  let dragging = false;
+
+  function startDrag(e) {
+    e.preventDefault();
+    dragging = true;
+    splitter.classList.add("dragging");
+    document.addEventListener("mousemove", onDrag);
+    document.addEventListener("mouseup", stopDrag);
+    document.addEventListener("touchmove", onDrag, { passive: false });
+    document.addEventListener("touchend", stopDrag);
+  }
+
+  function onDrag(e) {
+    if (!dragging) return;
+    // support mouse and touch
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const rect = grid.getBoundingClientRect();
+    let leftWidth = clientX - rect.left;
+
+    // clamp min/max
+    const min = 200; // min left width
+    const max = rect.width - 200; // min right width
+    if (leftWidth < min) leftWidth = min;
+    if (leftWidth > max) leftWidth = max;
+
+    grid.style.gridTemplateColumns = `${leftWidth}px 12px 1fr`;
+    localStorage.setItem(STORAGE_KEY, String(leftWidth));
+  }
+
+  function stopDrag() {
+    dragging = false;
+    splitter.classList.remove("dragging");
+    document.removeEventListener("mousemove", onDrag);
+    document.removeEventListener("mouseup", stopDrag);
+    document.removeEventListener("touchmove", onDrag);
+    document.removeEventListener("touchend", stopDrag);
+  }
+
+  splitter.addEventListener("mousedown", startDrag);
+  splitter.addEventListener("touchstart", startDrag, { passive: false });
+
+  // double click to reset to equal columns
+  splitter.addEventListener("dblclick", () => {
+    grid.style.gridTemplateColumns = "1fr 12px 1fr";
+    localStorage.removeItem(STORAGE_KEY);
+  });
+
+  // Accessibility: keyboard support (left/right arrows)
+  splitter.setAttribute("tabindex", 0);
+  splitter.addEventListener("keydown", (ev) => {
+    const step = 20;
+    if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+      ev.preventDefault();
+      const style = getComputedStyle(grid).gridTemplateColumns;
+      const parts = style.split(" ");
+      let left = parseFloat(parts[0].replace("px", "")) || (grid.clientWidth / 2);
+      if (ev.key === "ArrowLeft") left = Math.max(200, left - step);
+      else left = Math.min(grid.clientWidth - 200, left + step);
+      grid.style.gridTemplateColumns = `${left}px 12px 1fr`;
+      localStorage.setItem(STORAGE_KEY, String(left));
+    }
+  });
+
+})();
+</script>
+
+
+<body>
+
+{% if filemeta %}
+  <div class="meta">
+    File: {{ filemeta.name }} • 
+    {% set size_kb = (filemeta.size | int) / 1024 %}
+    {% if size_kb < 1024 %}
+      {{ size_kb|round(1) }} KB
+    {% else %}
+      {{ (size_kb/1024)|round(2) }} MB
+    {% endif %}
+  </div>
+{% endif %}
+
+
+{% if not extracted_text %}
+  <!-- BEFORE UPLOAD -->
+  <div class="center">
+    <div class="upload-card">
+      <form id="uploadForm" method="POST" action="/upload" enctype="multipart/form-data">
+        <input id="fileInput" type="file" name="file" accept=".pdf,.docx,image/*,.txt,.csv,.md" required>
+        <br><br>
+        <button id="uploadBtn" type="submit" class="upload-btn">Upload</button>
+      </form>
+      <div id="loading" class="hidden">
+        <div class="spinner"></div>
+        <p>Processing your document... please wait</p>
+      </div>
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          {% for msg in messages %}
+            <div class="flash">{{ msg }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+  </div>
+
+{% else %}
+  <!-- AFTER UPLOAD -->
+  <div class="container">
+    <div class="topbar">
+      <a href="{{ url_for('routes.reset') }}" class="link">⬅ Back to Upload</a>
+    </div>
+    <div class="viewer-container">
+  <div id="viewer-grid" class="viewer-grid">
+    <!-- Left side: full extracted text -->
+    <div id="left-panel" class="card left-card">
+      <h2>Extracted Text</h2>
+      <div class="content">
+        <div class="scroll doc-scroll">{{ extracted_text }}</div>
+        {% if filemeta %}
+        <div class="meta">
+          File: {{ filemeta.name }} •
+          {% set size_kb = (filemeta.size | int) / 1024 %}
+          {% if size_kb < 1024 %}
+            {{ size_kb|round(1) }} KB
+          {% else %}
+            {{ (size_kb/1024)|round(2) }} MB
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Splitter / draggable handle -->
+    <div id="splitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+    <!-- Right side: Q&A chat -->
+    <div id="right-panel" class="card right-card">
+      <h2>Ask Questions</h2>
+      <div class="content">
+        <div id="chatWindow" class="chat-window chat"></div>
+        <div class="row ask-row">
+          <input id="chatInput" type="text" placeholder="Type your question…" />
+          <button id="sendBtn" class="primary" onclick="sendQuestion()">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  // Spinner logic
+  const uploadForm = document.getElementById("uploadForm");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const loading = document.getElementById("loading");
+  if(uploadForm){
+    uploadForm.addEventListener("submit", ()=>{
+      uploadBtn.disabled = true;
+      loading.classList.remove("hidden");
+    });
+  }
+
+  // Chat logic
+  const chatWindow=document.getElementById('chatWindow');
+  function pushBubble(role,text){
+    const div=document.createElement('div');
+    div.className='bubble '+(role==='user'?'user':'bot');
+    div.textContent=text;
+    chatWindow.appendChild(div);
+    chatWindow.scrollTop=chatWindow.scrollHeight;
+  }
+  async function sendQuestion(){
+    const input=document.getElementById('chatInput');
+    const q=(input.value||'').trim();
+    if(!q)return;
+    pushBubble('user',q);
+    input.value='';
+    const res=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+    const data=await res.json();
+    pushBubble('bot',data.answer||'No answer');
+  }
+</script>
+
+</body>
+</html>

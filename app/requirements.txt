@@ -1,0 +1,30 @@
+    # Web framework
+    Flask>=3.0.0
+
+    # PDF parsing
+    pdfminer.six>=20240706
+
+    # Word documents (.docx)
+    python-docx>=1.1.0
+
+    # Image handling + OCR
+    Pillow>=10.3.0
+    pytesseract>=0.3.10
+
+    # Redis client (server-side storage)
+    redis>=5.0.0
+    REDIS_URL=redis://localhost:6379/0
+    DOC_TTL_SECONDS=86400
+    COMPRESS_THRESHOLD=32768
+    USE_S3_FOR_LARGE=1
+    S3_BUCKET=my-doc-bucket
+    S3_THRESHOLD=2242880
+
+
+    # Testing (pytest for unit tests in /tests/)
+    pytest>=8.2.0
+
+    # gunicorn - Green unicorn a HTTPS web server gateway interface which lets python web apps to communiccate to other web servers
+    gunicorn>=21.2
+
+    jinja2>=3.1

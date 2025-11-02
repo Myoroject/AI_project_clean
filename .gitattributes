@@ -1,0 +1,11 @@
+# Normalize line endings for all text files
+* text=auto
+
+# Treat images and binaries as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.exe binary
+*.dll binary

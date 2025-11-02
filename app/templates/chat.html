@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chat — AI Document Search</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-title">AI Document Search</div>
+    <div class="meta">
+      {% if filemeta %}
+        <div class="file-meta">
+          <strong>{{ filemeta.name }}</strong>
+          <span class="muted"> · {{ filemeta.size }} bytes</span>
+        </div>
+      {% endif %}
+      <div class="doc-id">Doc: <code id="doc-id">{{ doc_id or "none" }}</code></div>
+    </div>
+  </header>
+
+  <main class="split">
+    <!-- LEFT: Document preview / summary -->
+    <section class="left-panel">
+      <div class="panel-header">
+        <h3>Document Summary</h3>
+        <button id="expand-btn" class="link-btn">Show more</button>
+      </div>
+
+      <div id="summary" class="preview">
+        {% if preview %}
+          {{ preview }}
+        {% else %}
+          <em>No preview available</em>
+        {% endif %}
+      </div>
+
+      <!-- Hidden full-text container (initially collapsed) -->
+      <div id="fulltext" class="preview hidden">
+        {% if preview_full is defined %}
+          {{ preview_full }}
+        {% else %}
+          <!-- If you don't pass preview_full from server this will still exist but empty -->
+          {{ preview }}
+        {% endif %}
+      </div>
+
+      <div class="panel-footer muted">
+        Use the search panel to find answers from the document or ask a question on the right.
+      </div>
+    </section>
+
+    <!-- RIGHT: Chat interface -->
+    <section class="right-panel">
+      <div class="chat-box" id="chat-box">
+        <div id="messages" class="messages">
+          <!-- messages will be appended here -->
+        </div>
+      </div>
+
+      <div class="ask-row">
+        <input id="question" type="text" placeholder="Ask a question about this document..." />
+        <button id="ask-btn">Ask</button>
+      </div>
+
+      <div id="answer" class="answer-area"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <small class="muted">Local dev • not for production</small>
+  </footer>
+
+<script>
+  const docId = document.getElementById('doc-id').textContent.trim();
+  const expandBtn = document.getElementById('expand-btn');
+  const summaryEl = document.getElementById('summary');
+  const fulltextEl = document.getElementById('fulltext');
+
+  // Toggle show more / less
+  expandBtn?.addEventListener('click', () => {
+    const isHidden = fulltextEl.classList.contains('hidden');
+    if (isHidden) {
+      // reveal full text (if fulltext empty, copy preview)
+      if (!fulltextEl.textContent.trim()) {
+        fulltextEl.textContent = summaryEl.textContent || '';
+      }
+      fulltextEl.classList.remove('hidden');
+      summaryEl.classList.add('hidden');
+      expandBtn.textContent = 'Show less';
+    } else {
+      fulltextEl.classList.add('hidden');
+      summaryEl.classList.remove('hidden');
+      expandBtn.textContent = 'Show more';
+      // scroll preview to top
+      summaryEl.scrollTop = 0;
+    }
+  });
+
+  // Ask button
+  document.getElementById('ask-btn')?.addEventListener('click', async () => {
+    const q = document.getElementById('question').value.trim();
+    if (!q) return;
+    const messages = document.getElementById('messages');
+    const pending = document.createElement('div');
+    pending.className = 'msg user';
+    pending.innerText = 'You: ' + q;
+    messages.appendChild(pending);
+    // call server /ask
+    const resp = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    const j = await resp.json();
+    const ai = document.createElement('div');
+    ai.className = 'msg ai';
+    if (j.ok) {
+      ai.innerText = 'AI: ' + j.answer;
+    } else {
+      ai.innerText = 'Error: ' + (j.answer || 'no answer');
+    }
+    messages.appendChild(ai);
+    // keep scroll at bottom
+    messages.scrollTop = messages.scrollHeight;
+  });
+</script>
+</body>
+</html>

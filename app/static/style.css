@@ -1,0 +1,90 @@
+:root{
+  --bg:#ffffff;
+  --muted:#6b7280;
+  --panel:#fbfbfb;
+  --border:#e6e6e6;
+  --accent:#2563eb;
+  --radius:10px;
+  --gap:18px;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:#111827;
+  font-size:15px;
+  line-height:1.4;
+}
+
+.site-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:14px 22px;
+  border-bottom:1px solid var(--border);
+  background:white;
+}
+
+.site-title{ font-weight:700; font-size:18px; }
+.meta{ display:flex; gap:12px; align-items:center; color:var(--muted); }
+
+.split{
+  display:flex;
+  gap:var(--gap);
+  padding:18px;
+  height: calc(100vh - 128px); /* header + footer approx */
+  box-sizing:border-box;
+}
+
+/* Left column */
+.left-panel{
+  flex:0 0 46%;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.panel-header{ display:flex; justify-content:space-between; align-items:center; }
+.preview{
+  background:var(--panel);
+  border:1px solid var(--border);
+  padding:12px;
+  border-radius:8px;
+  overflow:auto;
+  max-height: calc(100vh - 300px);
+  white-space:pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+}
+
+/* Right column (chat) */
+.right-panel{
+  flex:0 0 54%;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.chat-box{
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+  flex:1 1 auto;
+  overflow:auto;
+}
+.messages{ display:flex; flex-direction:column; gap:8px; }
+.msg { padding:10px; border-radius:8px; max-width:85%; }
+.msg.user{ align-self:flex-end; background:#e6f0ff; border:1px solid #cfe2ff; color:#032b6f;}
+.msg.ai{ align-self:flex-start; background:#f4f6f8; border:1px solid #e8eaec; color:#111; }
+
+.ask-row{ display:flex; gap:8px; margin-top:6px; }
+.ask-row input[type="text"]{ flex:1; padding:10px; border-radius:8px; border:1px solid var(--border); }
+.ask-row button{ padding:10px 14px; border-radius:8px; background:var(--accent); color:white; border:none; cursor:pointer; }
+
+.panel-footer{ color:var(--muted); font-size:13px; margin-top:6px; }
+
+.site-footer{ padding:12px 20px; color:var(--muted); border-top:1px solid var(--border); font-size:13px; }
+
+/* misc */
+.hidden{ display:none; }
+.link-btn{ background:none; border:none; color:var(--accent); cursor:pointer; font-weight:600; }
+.muted{ color:var(--muted); font-size:13px; }

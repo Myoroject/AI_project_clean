@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Search Document</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>Search in {{ filemeta.name }}</h1>
+        <p>Size: {{ filemeta.size }}</p>
+    </header>
+
+    <main>
+        <section>
+            <h2>Ask a Question</h2>
+            <form id="ask-form">
+                <input type="text" name="question" placeholder="Type your query..." required>
+                <button type="submit">Search</button>
+            </form>
+            <div id="answer"></div>
+        </section>
+
+        <section>
+            <h3>Preview</h3>
+            <pre>{{ preview }}</pre>
+        </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("ask-form");
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const question = form.question.value;
+        const res = await fetch("{{ url_for('routes.ask') }}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question })
+        });
+        const data = await res.json();
+        document.getElementById("answer").innerText = data.answer;
+      });
+    </script>
+</body>
+</html>
