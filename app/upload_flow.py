@@ -1,74 +1,74 @@
-# upload_flow.py (simplified)
+# upload_flow.py (replace handle_text_upload with the block below)
 import io
+import logging
 import uuid
 from app.redis_client import put_doc_text, build_chunks_from_redis
 from app.ingest_db import insert_document, insert_chunks_bulk
 from typing import Optional
 from pypdf import PdfReader
+from app.ingest_db import insert_document, insert_chunks_bulk
+from semantic_chunker import build_chunks_from_redis
 
+logger = logging.getLogger("upload_flow")
 
-def handle_text_upload(
-    user_id: Optional[str],
-    filename: str,
-    text: str,
-    pdf_bytes: Optional[bytes] = None,
-) -> str:
+def handle_text_upload(user_id: str, filename: str, uploaded_file_bytes: Optional[bytes] = None, pdf_bytes: Optional[bytes] = None):
     """
-    Create doc_id, compute metadata (size_bytes, total_pages for PDFs),
-    store text/chunks, and insert document metadata into DB.
+    Process an uploaded document and persist metadata + chunks.
 
-    This ensures total_pages is computed from the actual uploaded bytes.
+    - user_id, filename: metadata
+    - uploaded_file_bytes: bytes read from upload (if provided)
+    - pdf_bytes: optional explicit bytes to pass to chunker (preferred)
+    Returns: doc_id
     """
-
-    # 1) Create doc id
+    # 1) generate doc_id
     doc_id = str(uuid.uuid4())
-    # 2) Compute size_bytes (prefer file bytes if present)
-    if pdf_bytes:
-        size_bytes = len(pdf_bytes)
-    else:
-        # fallback: size of text in bytes
-        size_bytes = len((text or "").encode("utf-8"))
 
-    # 3) Compute total_pages if this is a PDF and bytes are present
+    # 2) select pdf_bytes (prefer explicit argument)
+    if pdf_bytes is None and uploaded_file_bytes is not None:
+        pdf_bytes = uploaded_file_bytes
+
+    size_bytes = len(pdf_bytes) if pdf_bytes else 0
     total_pages = None
-    if pdf_bytes:
-        try:
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            total_pages = len(reader.pages)
-            print(f"[handle_text_upload] doc_id={doc_id} computed total_pages={total_pages} for {filename}")
-        except Exception as e:
-            print(f"[handle_text_upload] Warning: failed to read PDF for {filename}: {e}")
-            total_pages = None
-    else:
-        print(f"[handle_text_upload] No pdf_bytes provided for {filename}; total_pages will be NULL")
 
-    ok = put_doc_text(doc_id, text)
-    if not ok:
-        # update document status to error (you can implement update)
-        raise RuntimeError("Failed to store text in Redis")
-        
-
-    # 4) (Your existing logic) store raw text in Redis / chunk / embed etc.
-    # Example: put_doc_text(doc_id, text)
+    # 3) persist minimal document metadata so FK target exists
     try:
-        # your existing calls — keep these (pseudo)
-        # put_doc_text(doc_id, text)
-        # create chunks, embeddings, etc.
-        pass
+        insert_document(
+            doc_id=doc_id,
+            user_id=user_id,
+            filename=filename or "",
+            size_bytes=size_bytes,
+            storage="redis",
+            total_pages=total_pages,
+            pdf_bytes=None,
+        )
     except Exception as e:
-        print(f"[handle_text_upload] Warning: storage/embedding step failed: {e}")
+        # log and continue - document row insert failing is serious, consider raising if you want to abort
+        logger.exception("Failed to insert document metadata for %s: %s", doc_id, e)
 
-    # 5) Insert metadata into DB using insert_document. Pass total_pages and size_bytes.
-    # insert_document should accept total_pages param (your current insert_document does)
-    insert_document(
-        doc_id=doc_id,
-        user_id=user_id,
-        filename=filename,
-        size_bytes=size_bytes,
-        storage="redis",
-        total_pages=total_pages,
-        pdf_bytes=None,   # Optional: not needed now because we've computed total_pages here
-    )
+    # 4) build chunk metadata (dry_run=True recommended so semantic_chunker doesn't write DB)
+    try:
+        chunk_dicts = build_chunks_from_redis(
+            doc_id=doc_id,
+            redis_client=None,
+            pdf_path=None,
+            pdf_bytes=pdf_bytes,
+            nlp=None,
+            window_size=3,
+            buffer_size=1,
+            dry_run=True
+        )
 
-    # 6) return doc_id to caller
+        if chunk_dicts:
+            insert_chunks_bulk(doc_id, chunk_dicts)
+            logger.info("[handle_text_upload] Inserted %d chunk records for doc_id=%s", len(chunk_dicts), doc_id)
+            print(f"[handle_text_upload] Inserted {len(chunk_dicts)} chunk records for doc_id={doc_id}")
+        else:
+            logger.info("[handle_text_upload] No chunks returned for doc_id=%s", doc_id)
+            print(f"[handle_text_upload] No chunks returned for doc_id={doc_id}")
+
+    except Exception as e:
+        # document metadata exists; chunking failed — log for retry/snooze
+        logger.exception("[handle_text_upload] build_chunks_from_redis or insert_chunks_bulk failed for doc_id=%s: %s", doc_id, e)
+        print(f"[handle_text_upload] Warning: build_chunks_from_redis or insert_chunks_bulk failed: {e}")
+
     return doc_id
