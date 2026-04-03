@@ -7,9 +7,7 @@ Handles:
 - Chunk metadata inserts
 - Embedding map inserts
 
-This file relies on your application's DB helper `app.db.get_conn()` to obtain
-a psycopg2 connection. That function should return a psycopg2 connection and
-is responsible for reading DB credentials from env / .env.
+Relies on app.db.get_conn() to return a psycopg2 connection.
 """
 
 import uuid
@@ -25,15 +23,12 @@ try:
 except Exception:
     PdfReader = None
 
-# use your project's DB connector
 from app.db import get_conn
 
 logger = logging.getLogger("ingest_db")
 
 
-# -------------------------
 # DOCUMENTS
-# -------------------------
 def insert_document(
     doc_id: str,
     user_id: Optional[str],
@@ -47,7 +42,6 @@ def insert_document(
     Insert or upsert a document row. Compute total_pages for PDFs if pdf_bytes given.
     Returns the doc_id (string).
     """
-    # Optionally compute page count from pdf bytes
     if pdf_bytes:
         try:
             if PdfReader is None:
@@ -57,7 +51,7 @@ def insert_document(
             logger.info("[insert_document] total_pages=%s for filename=%s", total_pages, filename)
         except Exception as e:
             logger.warning("[insert_document] could not read PDF to compute pages: %s", e)
-            total_pages = total_pages  # keep passed value or None
+            total_pages = total_pages
     else:
         logger.debug("[insert_document] no pdf_bytes provided for filename=%s", filename)
 
@@ -104,9 +98,6 @@ def insert_document(
 
 
 def update_document_status(doc_id: str, status: str) -> None:
-    """
-    Update the 'status' column for a document.
-    """
     sql_text = """
     UPDATE documents
        SET status = %s,
@@ -126,10 +117,6 @@ def update_document_status(doc_id: str, status: str) -> None:
 
 
 def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Retrieve a document record as a dictionary.
-    Returns None if not found.
-    """
     sql_text = "SELECT * FROM documents WHERE doc_id = %s"
     conn = get_conn()
     if conn is None:
@@ -144,17 +131,13 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 
-# -------------------------------------------------------------------
 # CHUNKS TABLE OPERATIONS
-# -------------------------------------------------------------------
-def ensure_document_row(conn, doc_id: str, extra_meta: Dict = None):
+def ensure_document_row(conn, doc_id: str, extra_meta: Optional[Dict] = None):
     """
     Ensure the parent documents row exists for doc_id using an existing connection.
-    This function is idempotent and defensive: it provides sensible defaults for
-    NOT NULL columns (filename, storage, status, size_bytes) to avoid constraint errors.
-    If extra_meta is provided, its keys will be included/overridden in the insert.
+    This function inserts sensible defaults for NOT NULL fields so downstream
+    chunk inserts don't violate constraints.
     """
-    # sensible defaults to avoid NOT NULL violations
     defaults = {
         "user_id": None,
         "filename": "",
@@ -164,12 +147,10 @@ def ensure_document_row(conn, doc_id: str, extra_meta: Dict = None):
         "total_pages": None,
     }
 
-    # Merge extra_meta if present (extra_meta overrides defaults)
     meta = dict(defaults)
     if extra_meta:
         meta.update({k: (v if v is not None else meta.get(k)) for k, v in extra_meta.items()})
 
-    # Build a safe INSERT that includes all the potentially required columns.
     cols = ["doc_id", "user_id", "filename", "storage", "size_bytes", "status", "total_pages", "created_at"]
     placeholders = ", ".join(["%s"] * len(cols))
     sql = f"INSERT INTO documents ({', '.join(cols)}) VALUES ({placeholders}) ON CONFLICT (doc_id) DO NOTHING;"
@@ -189,7 +170,6 @@ def ensure_document_row(conn, doc_id: str, extra_meta: Dict = None):
         cur.execute(sql, values)
 
 
-
 def insert_chunks_bulk(doc_id: str, chunks: List[Dict]) -> None:
     """
     Bulk insert chunk metadata into the `chunks` table.
@@ -200,7 +180,7 @@ def insert_chunks_bulk(doc_id: str, chunks: List[Dict]) -> None:
       - stored_bytes (int) (optional)
     Optional:
       - text_preview (str)
-      - start_token, end_token, token_count (int)
+      - token_count (int)
       - chunk_id (UUID string; auto-generated if missing)
     """
     if not chunks:
@@ -218,13 +198,14 @@ def insert_chunks_bulk(doc_id: str, chunks: List[Dict]) -> None:
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     for ch in chunks:
-        # Defensive defaults
         chunk_id = ch.get("chunk_id") or str(uuid.uuid4())
         chunk_index = int(ch.get("chunk_index", 0) or 0)
-        start_offset = int(ch.get("start_token", 0) or 0)
-        end_offset = int(ch.get("end_token", 0) or 0)
-        text_preview = ch.get("text_preview") or ""
-        redis_key = ch.get("redis_key") or ""   # ensure non-null
+        start_offset = int(ch.get("start_offset", 0) or 0)
+        end_offset = int(ch.get("end_offset", 0) or 0)
+        full_preview = ch.get("text") or ch.get("text_preview") or ""
+        text_preview = (full_preview[:300]) if full_preview else (ch.get("text_preview") or "")
+        # Ensure redis_key is never None: use provided key or a stable doc pointer
+        redis_key = ch.get("redis_key") or f"doc:{doc_id}"
         stored_bytes = int(ch.get("stored_bytes", 0) or 0)
         token_count = int(ch.get("token_count", 0) or 0)
 
@@ -246,8 +227,8 @@ def insert_chunks_bulk(doc_id: str, chunks: List[Dict]) -> None:
         raise Exception("Database connection failed in insert_chunks_bulk")
 
     try:
-        # Ensure the parent document exists and insert chunks in one transaction
         with conn:
+            # Ensure parent documents row exists in same transaction (avoids FK race)
             ensure_document_row(conn, doc_id, extra_meta=None)
             with conn.cursor() as cur:
                 execute_values(cur, sql_text, rows, page_size=100)
@@ -257,20 +238,8 @@ def insert_chunks_bulk(doc_id: str, chunks: List[Dict]) -> None:
     logger.info("Inserted %d chunk rows for doc_id=%s", len(rows), doc_id)
 
 
-# -------------------------------------------------------------------
-# EMBEDDINGS MAP TABLE OPERATIONS
-# -------------------------------------------------------------------
+# EMBEDDINGS MAP
 def insert_embeddings_map_bulk(entries: List[Dict]) -> None:
-    """
-    Bulk insert embeddings into `embeddings_map`.
-
-    Each dict must include:
-      - chunk_id (UUID)
-      - vector_index (int)
-    Optional:
-      - model_name (str)
-      - score (float)
-    """
     if not entries:
         return
 
@@ -300,4 +269,128 @@ def insert_embeddings_map_bulk(entries: List[Dict]) -> None:
     finally:
         conn.close()
 
-    logger.info("Inserted %d embedding map entries", len(rows))
+def update_block_embeddings(block_ids: List[str], embeddings_list: List[List[float]]) -> None:
+    """Bulk update embeddings for document blocks in PostgreSQL."""
+    if not block_ids or not embeddings_list: return
+    
+    sql_text = """
+    UPDATE document_blocks
+    SET embedding = data.embedding::vector
+    FROM (VALUES %s) AS data(id, embedding)
+    WHERE document_blocks.block_id = data.id::text;
+    """
+    
+    # Format list of lists into strings for pgvector "[0.1, 0.2, ...]"
+    rows = []
+    for b_id, emb in zip(block_ids, embeddings_list):
+        emb_str = "[" + ",".join(map(str, emb)) + "]"
+        rows.append((b_id, emb_str))
+        
+    conn = get_conn()
+    if not conn:
+        raise Exception("Database connection failed in update_block_embeddings")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql_text, rows, page_size=100)
+        logger.info(f"Updated embeddings for {len(block_ids)} blocks natively in Postgres.")
+    finally:
+        conn.close()
+
+
+def ensure_search_results_table(conn) -> None:
+    """Create the search_results table if it does not exist."""
+    with conn.cursor() as cur:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS search_results (
+            result_id TEXT PRIMARY KEY,
+            search_id TEXT NOT NULL,
+            doc_id TEXT NOT NULL,
+            block_id TEXT NOT NULL,
+            query_text TEXT NOT NULL,
+            rank INTEGER NOT NULL,
+            answer_text TEXT NOT NULL,
+            final_score DOUBLE PRECISION,
+            cosine_score DOUBLE PRECISION,
+            page_number INTEGER,
+            block_type TEXT,
+            x1 DOUBLE PRECISION,
+            y1 DOUBLE PRECISION,
+            x2 DOUBLE PRECISION,
+            y2 DOUBLE PRECISION,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_search_results_search_id
+            ON search_results (search_id);
+
+        CREATE INDEX IF NOT EXISTS idx_search_results_doc_id
+            ON search_results (doc_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_search_results_block_id
+            ON search_results (block_id);
+        """)
+        conn.commit()
+
+
+def insert_search_results(doc_id: str, query_text: str, results: List[Any]) -> Optional[str]:
+    """
+    Persist the ranked search results for a query.
+
+    Each row stores the doc_id + block_id pair plus ranking metadata so the
+    full ranked retrieval set can be audited later while the UI only renders
+    the top answer.
+    """
+    if not results:
+        return None
+
+    rows = []
+    search_id = str(uuid.uuid4())
+
+    for rank, result in enumerate(results, start=1):
+        rows.append((
+            str(uuid.uuid4()),
+            search_id,
+            doc_id,
+            str(getattr(result, "block_id")),
+            query_text,
+            rank,
+            getattr(result, "text", "") or "",
+            float(getattr(result, "score", 0.0) or 0.0),
+            float(getattr(result, "cosine_score", 0.0) or 0.0),
+            getattr(result, "page_number", None),
+            getattr(result, "block_type", None),
+            getattr(result, "x1", None),
+            getattr(result, "y1", None),
+            getattr(result, "x2", None),
+            getattr(result, "y2", None),
+        ))
+
+    sql_text = """
+    INSERT INTO search_results (
+        result_id, search_id, doc_id, block_id, query_text, rank,
+        answer_text, final_score, cosine_score, page_number, block_type,
+        x1, y1, x2, y2
+    )
+    VALUES %s
+    """
+
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in insert_search_results")
+
+    try:
+        with conn:
+            ensure_search_results_table(conn)
+            with conn.cursor() as cur:
+                execute_values(cur, sql_text, rows, page_size=100)
+    finally:
+        conn.close()
+
+    logger.info(
+        "Inserted %d ranked search results for doc_id=%s search_id=%s",
+        len(rows),
+        doc_id,
+        search_id,
+    )
+    return search_id

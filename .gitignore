@@ -17,3 +17,10 @@ Thumbs.db
 .idea/
 
 Resumes/
+
+# Local generated data and profiling artifacts
+data/
+profile_output/
+old_data.dump
+debug_docs.txt
+prd_extracted.txt

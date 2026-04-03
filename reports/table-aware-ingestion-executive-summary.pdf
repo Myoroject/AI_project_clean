@@ -1,0 +1,101 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 
+endobj
+6 0 obj
+1858endobj
+7 0 obj
+ >>`nstream`n
+endobj
+8 0 obj
+BT
+/F1 11 Tf
+50 760 Td
+14 TL
+(DocMind Executive Summary: Table-Aware Ingestion and Retrieval Upgrade) Tj
+T*
+() Tj
+T*
+(Overview) Tj
+T*
+(DocMind was upgraded from a text-only retrieval flow toward a table-aware architecture.) Tj
+T*
+(The goal was to make financial, comparative, and tabular questions more reliable.) Tj
+T*
+() Tj
+T*
+(Key Changes Delivered) Tj
+T*
+(1. Added page-level table detection for every PDF page with configurable thresholds.) Tj
+T*
+(2. Integrated Camelot extraction with validation, markdown conversion, and numeric normalization.) Tj
+T*
+(3. Added dedicated document_tables storage plus page detections and extraction failure logs.) Tj
+T*
+(4. Introduced one unified embeddings layer for text blocks, full tables, and row-level table entries.) Tj
+T*
+(5. Replaced the old per-upload background thread with a queue-backed async worker flow.) Tj
+T*
+(6. Persisted original PDF bytes so async workers can process the source document after upload.) Tj
+T*
+(7. Enriched tables with provenance such as page number, bounding box, and nearby heading or caption.) Tj
+T*
+(8. Updated retrieval so search can return hydrated table evidence, including highlighted rows.) Tj
+T*
+() Tj
+T*
+(Business Impact) Tj
+T*
+(The platform now has a reliable foundation for numeric lookup, year-over-year comparison,) Tj
+T*
+(and future LLM answer generation over structured document tables.) Tj
+T*
+() Tj
+T*
+(Current Boundary) Tj
+T*
+(The ask route still returns top evidence directly. Groq-based answer synthesis was left for the next phase.) Tj
+T*
+() Tj
+T*
+(Verification Note) Tj
+T*
+(Code changes were implemented in the workspace and retrieval tests were updated.) Tj
+T*
+(Executable verification was partially blocked because this machine does not expose a working Python launcher) Tj
+T*
+(and the checked-in virtual environment points to a missing interpreter.) Tj
+T*
+ET
+endobj
+9 0 obj
+`nendstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+0000000338 00000 n 
+0000000357 00000 n 
+0000000386 00000 n 
+0000002260 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+2287
+%%EOF

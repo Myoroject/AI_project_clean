@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DocMind Table-Aware Ingestion Executive Summary</title>
+  <style>
+    :root {
+      --ink: #17324d;
+      --muted: #5f7082;
+      --accent: #0f766e;
+      --accent-soft: #dff6f2;
+      --line: #d7e2ec;
+      --paper: #ffffff;
+      --panel: #f6f9fc;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(180deg, #f2f7fb 0%, #ffffff 100%);
+      color: var(--ink);
+    }
+
+    .page {
+      width: 960px;
+      margin: 0 auto;
+      padding: 40px 44px 48px;
+      background: var(--paper);
+    }
+
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px 30px;
+      background:
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.14), transparent 32%),
+        linear-gradient(135deg, #ffffff 0%, #f7fcfb 100%);
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 31px;
+      line-height: 1.15;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      padding: 18px 20px;
+    }
+
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .section {
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px 22px;
+      background: #ffffff;
+    }
+
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 0 0 10px;
+      line-height: 1.55;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .highlight {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Executive Summary</p>
+      <h1>DocMind Table-Aware Ingestion and Retrieval Upgrade</h1>
+      <p class="subtitle">
+        The document pipeline was upgraded from text-only retrieval toward a table-aware architecture so financial,
+        comparative, and tabular questions can be answered with materially better structure, traceability, and future LLM readiness.
+      </p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>What Was Solved</h2>
+        <p>
+          Tables are no longer treated only as loose text blobs. The system now detects table-like PDF pages, extracts structured
+          tables, stores them separately, and embeds both text and tables in one retrieval layer.
+        </p>
+      </article>
+      <article class="card">
+        <h2>Why It Matters</h2>
+        <p>
+          This directly improves reliability for numeric lookups, year-over-year comparisons, and document questions where the answer
+          depends on row and column relationships rather than plain keyword matching.
+        </p>
+      </article>
+    </section>
+
+    <section class="section">
+      <h2>Implemented Changes</h2>
+      <ul>
+        <li><strong>New table pipeline:</strong> Added page-level table detection with confidence scoring and configurable thresholds for every PDF page.</li>
+        <li><strong>Structured extraction:</strong> Integrated Camelot-based extraction for detected pages, with validation rules, markdown rendering, normalized numeric values, and full-cell-matrix storage.</li>
+        <li><strong>Dedicated table storage:</strong> Added a new <span class="highlight">document_tables</span> model plus page detection logs and failed-extraction records for observability and debugging.</li>
+        <li><strong>Unified embeddings:</strong> Introduced a shared <span class="highlight">embeddings</span> table so standard text blocks, full tables, and row-level table representations can all participate in semantic search.</li>
+        <li><strong>Async processing queue:</strong> Replaced the old per-upload background embedding thread with a queue-backed worker flow that persists jobs and processes embeddings and table extraction asynchronously.</li>
+        <li><strong>Source persistence:</strong> Added storage for original PDF bytes so queued workers can access the source document after upload.</li>
+        <li><strong>Context enrichment:</strong> Added table provenance capture such as page number, bounding box, and nearby caption or heading text when available.</li>
+        <li><strong>Unified retrieval behavior:</strong> Updated retrieval so search can now return either text evidence or hydrated table evidence, including row-level matches plus the full table context.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Business Outcome</h2>
+      <ul>
+        <li>Creates the core retrieval foundation needed for accurate AI answers on tabular documents without jumping straight into heavy ML layout models.</li>
+        <li>Improves explainability by keeping structured tables, raw markdown, detection scores, and extraction failures available for inspection.</li>
+        <li>Preserves product speed by keeping upload fast and moving expensive embedding and table work into asynchronous processing.</li>
+        <li>Sets up a clean path for the next phase: sending full structured table context into the answer-generation layer.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Current Boundaries</h2>
+      <ul>
+        <li>The `/ask` route still returns top retrieved evidence directly; full Groq-based answer generation was intentionally left for the next phase.</li>
+        <li>Scanned PDFs are now observable within the pipeline, but Camelot extraction quality will still depend on the underlying PDF structure and may need later OCR-specific handling.</li>
+        <li>Row and full-table embeddings are implemented now; hybrid numeric-intent ranking logic and frontend table rendering were deferred as requested.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Execution Note</h2>
+      <ul>
+        <li>Focused retrieval tests were updated to match the new unified search behavior.</li>
+        <li>Local executable verification was partially blocked because this machine currently does not expose a working Python launcher and the checked-in virtual environment points to a missing interpreter.</li>
+      </ul>
+    </section>
+
+    <p class="footer">
+      Prepared from the implementation changes in the current DocMind workspace on 30 March 2026.
+    </p>
+  </main>
+</body>
+</html>

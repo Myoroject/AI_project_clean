@@ -9,7 +9,19 @@ services:
       REDIS_URL: redis://redis:6379/0
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       LOG_LEVEL: INFO
-    depends_on: [redis]
+    depends_on: [redis, db]
+    networks: [appnet]
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ai-doc-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     networks: [appnet]
   redis:
     image: redis:7
@@ -31,6 +43,7 @@ services:
 
 volumes:
   redisdata:
+  pgdata:
 
 networks:
   appnet:

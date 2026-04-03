@@ -1,11 +1,11 @@
 import io
 import os
 
-# PDF
+# PDF - Using PyMuPDF (fitz) for faster extraction
 try:
-    from pdfminer.high_level import extract_text as pdf_extract_text
-except Exception:
-    pdf_extract_text = None
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
 
 # DOCX
 try:
@@ -51,10 +51,16 @@ def extract_docx_text(file_bytes: bytes) -> str:
         return f"[DOCX extract error] {e}"
 
 def extract_pdf_text(file_bytes: bytes) -> str:
-    if not pdf_extract_text:
-        return "pdfminer.six is not installed; cannot read PDFs yet."
+    """Extract text from PDF using PyMuPDF (faster than PDFMiner)."""
+    if not fitz:
+        return "PyMuPDF (fitz) is not installed; cannot read PDFs yet."
     try:
-        return pdf_extract_text(io.BytesIO(file_bytes))
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        return "\n".join(text_parts)
     except Exception as e:
         return f"[PDF extract error] {e}"
 

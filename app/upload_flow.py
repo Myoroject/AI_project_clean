@@ -1,74 +1,98 @@
-# upload_flow.py (replace handle_text_upload with the block below)
-import io
+# upload_flow.py
+# Fast synchronous upload path: PDF -> blocks -> Redis text -> return doc_id.
+# Embeddings and table extraction are deferred to a queue-backed worker.
+
 import logging
 import uuid
-from app.redis_client import put_doc_text, build_chunks_from_redis
-from app.ingest_db import insert_document, insert_chunks_bulk
 from typing import Optional
-from pypdf import PdfReader
-from app.ingest_db import insert_document, insert_chunks_bulk
-from semantic_chunker import build_chunks_from_redis
+
+from app.ingest_db import insert_document
+from app.redis_client import put_doc_binary, put_doc_text
+from app.table_store import enqueue_processing_job, refresh_document_status
 
 logger = logging.getLogger("upload_flow")
 
-def handle_text_upload(user_id: str, filename: str, uploaded_file_bytes: Optional[bytes] = None, pdf_bytes: Optional[bytes] = None):
-    """
-    Process an uploaded document and persist metadata + chunks.
 
-    - user_id, filename: metadata
-    - uploaded_file_bytes: bytes read from upload (if provided)
-    - pdf_bytes: optional explicit bytes to pass to chunker (preferred)
+def handle_text_upload(
+    user_id: Optional[str],
+    filename: str,
+    full_text: str,
+    pdf_bytes: Optional[bytes] = None,
+) -> str:
+    """
+    Fast upload path (<3s target):
+    1. Generate doc_id
+    2. Store full text in Redis
+    3. Insert document metadata in PostgreSQL
+    4. Extract geometry blocks (PDF only)
+    5. Queue background jobs for block embeddings + table extraction
+    
     Returns: doc_id
     """
-    # 1) generate doc_id
+    # 1) Generate doc_id
     doc_id = str(uuid.uuid4())
 
-    # 2) select pdf_bytes (prefer explicit argument)
-    if pdf_bytes is None and uploaded_file_bytes is not None:
-        pdf_bytes = uploaded_file_bytes
+    # 2) Store full text in Redis (for preview + chat)
+    try:
+        ok = put_doc_text(doc_id, full_text)
+        logger.info(
+            "[upload_flow] put_doc_text doc_id=%s success=%s bytes=%d",
+            doc_id,
+            bool(ok),
+            len(full_text.encode("utf-8", errors="replace")),
+        )
+    except Exception as e:
+        logger.exception("[upload_flow] put_doc_text FAILED for %s: %s", doc_id, e)
+        raise
 
-    size_bytes = len(pdf_bytes) if pdf_bytes else 0
-    total_pages = None
-
-    # 3) persist minimal document metadata so FK target exists
+    # 3) Insert document metadata (FK anchor) - defaults to status='uploaded'
     try:
         insert_document(
             doc_id=doc_id,
             user_id=user_id,
             filename=filename or "",
-            size_bytes=size_bytes,
+            size_bytes=len(pdf_bytes) if pdf_bytes else len(full_text.encode("utf-8")),
             storage="redis",
-            total_pages=total_pages,
-            pdf_bytes=None,
-        )
-    except Exception as e:
-        # log and continue - document row insert failing is serious, consider raising if you want to abort
-        logger.exception("Failed to insert document metadata for %s: %s", doc_id, e)
-
-    # 4) build chunk metadata (dry_run=True recommended so semantic_chunker doesn't write DB)
-    try:
-        chunk_dicts = build_chunks_from_redis(
-            doc_id=doc_id,
-            redis_client=None,
-            pdf_path=None,
+            total_pages=None,
             pdf_bytes=pdf_bytes,
-            nlp=None,
-            window_size=3,
-            buffer_size=1,
-            dry_run=True
         )
-
-        if chunk_dicts:
-            insert_chunks_bulk(doc_id, chunk_dicts)
-            logger.info("[handle_text_upload] Inserted %d chunk records for doc_id=%s", len(chunk_dicts), doc_id)
-            print(f"[handle_text_upload] Inserted {len(chunk_dicts)} chunk records for doc_id={doc_id}")
-        else:
-            logger.info("[handle_text_upload] No chunks returned for doc_id=%s", doc_id)
-            print(f"[handle_text_upload] No chunks returned for doc_id={doc_id}")
-
     except Exception as e:
-        # document metadata exists; chunking failed — log for retry/snooze
-        logger.exception("[handle_text_upload] build_chunks_from_redis or insert_chunks_bulk failed for doc_id=%s: %s", doc_id, e)
-        print(f"[handle_text_upload] Warning: build_chunks_from_redis or insert_chunks_bulk failed: {e}")
+        logger.exception("[upload_flow] insert_document failed for %s: %s", doc_id, e)
+        raise
+
+    if pdf_bytes:
+        try:
+            put_doc_binary(doc_id, pdf_bytes, kind="pdf")
+        except Exception as e:
+            logger.warning("[upload_flow] failed to persist pdf bytes for doc_id=%s: %s", doc_id, e)
+
+    # 4) Extract geometry blocks (PDFs only) - enables spatial reranking
+    block_count = 0
+    if pdf_bytes:
+        try:
+            from block_extractor import process_document
+            blocks = process_document(doc_id=doc_id, pdf_bytes=pdf_bytes)
+            block_count = len(blocks)
+            logger.info(
+                "[upload_flow] extracted %d geometry blocks for doc_id=%s",
+                block_count,
+                doc_id,
+            )
+        except Exception as e:
+            # Non-fatal: blocks enhance search but aren't required
+            logger.warning("[upload_flow] block extraction failed for %s: %s", doc_id, e)
+
+    # 5) Queue async processing jobs
+    if block_count > 0:
+        enqueue_processing_job(doc_id, "embed_blocks", payload={"doc_id": doc_id}, required=True)
+
+    if pdf_bytes:
+        enqueue_processing_job(doc_id, "extract_tables", payload={"doc_id": doc_id}, required=True)
+        enqueue_processing_job(doc_id, "detect_visuals", payload={"doc_id": doc_id}, required=False)
+
+    if block_count > 0 or pdf_bytes:
+        refresh_document_status(doc_id)
+
+    logger.info("[upload_flow] FAST PATH COMPLETE doc_id=%s blocks=%d. Async jobs queued.", doc_id, block_count)
 
     return doc_id

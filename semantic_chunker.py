@@ -23,7 +23,6 @@ import fitz  # PyMuPDF
 import spacy
 
 # DB
-import psycopg2
 from psycopg2.extras import Json, execute_values
 
 # try to import canonical helper from redis_client
@@ -44,12 +43,7 @@ MIN_TABLE_LINES = 2
 EQUATION_SYMBOLS = set("=+-*/∑∫√→<>⋅^_{}\\")
 CAPTION_RE = re.compile(r"^\s*(Figure|Fig\.|Table)\s*\d+", re.I)
 
-# Postgres envs (used only by helper get_pg_conn below)
-PGHOST = os.getenv("PGHOST", "localhost")
-PGPORT = int(os.getenv("PGPORT", 5432))
-PGDATABASE = os.getenv("PGDATABASE", "postgres")
-PGUSER = os.getenv("PGUSER", "postgres")
-PGPASSWORD = os.getenv("PGPASSWORD", "yourpass")
+from app.db import get_conn as get_pg_conn
 
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -99,12 +93,6 @@ def clean_text_for_spacy(text: Any, doc_id: Optional[str] = None, save_sample: b
     except Exception:
         pass
     return text
-
-# ----------------------------
-# Postgres helpers
-# ----------------------------
-def get_pg_conn():
-    return psycopg2.connect(host=PGHOST, port=PGPORT, dbname=PGDATABASE, user=PGUSER, password=PGPASSWORD)
 
 def ensure_chunks_table(conn):
     with conn.cursor() as cur:
