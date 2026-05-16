@@ -394,3 +394,324 @@ def insert_search_results(doc_id: str, query_text: str, results: List[Any]) -> O
         search_id,
     )
     return search_id
+
+
+# =========================================================================
+# DASHBOARD DATA LAYER
+# Permanent document text storage + chat history for the workspace dashboard.
+# =========================================================================
+
+_DASHBOARD_TABLES_READY = False
+
+
+def ensure_dashboard_tables(conn) -> None:
+    """Create document_content and chat_history tables if they don't exist."""
+    global _DASHBOARD_TABLES_READY
+    if _DASHBOARD_TABLES_READY:
+        return
+
+    with conn.cursor() as cur:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS document_content (
+            doc_id TEXT PRIMARY KEY,
+            full_text TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_history (
+            chat_id TEXT PRIMARY KEY,
+            user_email TEXT NOT NULL,
+            doc_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            synthesized_answer TEXT NOT NULL,
+            answer_source TEXT,
+            llm_model TEXT,
+            search_id TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_history_user
+            ON chat_history (user_email, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_chat_history_doc
+            ON chat_history (doc_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_chat_history_search
+            ON chat_history (user_email, question);
+        """)
+        conn.commit()
+
+    _DASHBOARD_TABLES_READY = True
+    logger.info("Dashboard tables (document_content, chat_history) ensured")
+
+
+def insert_document_content(doc_id: str, full_text: str) -> None:
+    """
+    Permanently store document text in PostgreSQL.
+
+    Uses UPSERT so re-uploads overwrite the old text.
+    Called from upload_flow after the Redis write succeeds.
+    """
+    if not doc_id or not full_text:
+        logger.warning("[insert_document_content] skipping empty doc_id or text")
+        return
+
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in insert_document_content")
+
+    try:
+        with conn:
+            ensure_dashboard_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO document_content (doc_id, full_text, created_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (doc_id) DO UPDATE
+                        SET full_text = EXCLUDED.full_text,
+                            created_at = NOW()
+                    """,
+                    (doc_id, full_text),
+                )
+    finally:
+        conn.close()
+
+    text_bytes = len(full_text.encode("utf-8", errors="replace"))
+    logger.info(
+        "[insert_document_content] persisted doc_id=%s (%d bytes) to PostgreSQL",
+        doc_id,
+        text_bytes,
+    )
+
+
+def get_document_content(doc_id: str) -> Optional[str]:
+    """
+    Retrieve permanently stored document text from PostgreSQL.
+
+    Returns None if not found.  Used as fallback when Redis TTL expires.
+    """
+    if not doc_id:
+        return None
+
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in get_document_content")
+
+    try:
+        with conn:
+            ensure_dashboard_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT full_text FROM document_content WHERE doc_id = %s",
+                    (doc_id,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def insert_chat_entry(
+    user_email: str,
+    doc_id: str,
+    question: str,
+    synthesized_answer: str,
+    answer_source: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    search_id: Optional[str] = None,
+) -> str:
+    """
+    Log a Q&A interaction to chat_history.
+
+    Returns the chat_id.
+    """
+    chat_id = str(uuid.uuid4())
+
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in insert_chat_entry")
+
+    try:
+        with conn:
+            ensure_dashboard_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_history (
+                        chat_id, user_email, doc_id, question,
+                        synthesized_answer, answer_source, llm_model,
+                        search_id, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        chat_id,
+                        user_email,
+                        doc_id,
+                        question,
+                        synthesized_answer,
+                        answer_source,
+                        llm_model,
+                        search_id,
+                    ),
+                )
+    finally:
+        conn.close()
+
+    logger.info(
+        "[insert_chat_entry] chat_id=%s user=%s doc=%s",
+        chat_id,
+        user_email,
+        doc_id,
+    )
+    return chat_id
+
+
+def get_dashboard_stats(user_email: str) -> Dict[str, int]:
+    """
+    Return aggregate dashboard stats for an authenticated user.
+
+    Uses three lightweight queries:
+    - ready document totals
+    - ready document weekly totals
+    - chat_history all-time + weekly totals
+    """
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in get_dashboard_stats")
+
+    try:
+        with conn:
+            ensure_dashboard_tables(conn)
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS document_count,
+                        COALESCE(SUM(total_pages), 0) AS pages_processed
+                    FROM documents
+                    WHERE user_id = %s AND status = 'ready'
+                    """,
+                    (user_email,),
+                )
+                document_totals = cur.fetchone() or {}
+
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS documents_this_week,
+                        COALESCE(SUM(total_pages), 0) AS pages_this_week
+                    FROM documents
+                    WHERE user_id = %s AND status = 'ready'
+                      AND created_at >= NOW() - INTERVAL '7 days'
+                    """,
+                    (user_email,),
+                )
+                weekly_document_totals = cur.fetchone() or {}
+
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS questions_asked,
+                        COUNT(*) FILTER (
+                            WHERE created_at >= NOW() - INTERVAL '7 days'
+                        ) AS questions_this_week
+                    FROM chat_history
+                    WHERE user_email = %s
+                    """,
+                    (user_email,),
+                )
+                question_totals = cur.fetchone() or {}
+    finally:
+        conn.close()
+
+    return {
+        "document_count": int(document_totals.get("document_count") or 0),
+        "pages_processed": int(document_totals.get("pages_processed") or 0),
+        "documents_this_week": int(weekly_document_totals.get("documents_this_week") or 0),
+        "pages_this_week": int(weekly_document_totals.get("pages_this_week") or 0),
+        "questions_asked": int(question_totals.get("questions_asked") or 0),
+        "questions_this_week": int(question_totals.get("questions_this_week") or 0),
+    }
+
+
+def _humanize_size(size_bytes: int) -> str:
+    """Convert raw bytes to human-readable string."""
+    if size_bytes is None:
+        return "—"
+    b = int(size_bytes)
+    if b < 1024:
+        return f"{b} B"
+    if b < 1024 * 1024:
+        return f"{b / 1024:.1f} KB"
+    if b < 1024 * 1024 * 1024:
+        return f"{b / (1024 * 1024):.1f} MB"
+    return f"{b / (1024 * 1024 * 1024):.1f} GB"
+
+
+def get_user_documents(user_email: str) -> List[Dict[str, Any]]:
+    """
+    Return all ready documents for a user, sorted most-recent first.
+    Includes a human-readable size_display field.
+    """
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in get_user_documents")
+
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT doc_id, filename, total_pages, size_bytes,
+                           status, created_at
+                    FROM documents
+                    WHERE user_id = %s AND status = 'ready'
+                    ORDER BY created_at DESC
+                    """,
+                    (user_email,),
+                )
+                rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    docs = []
+    for row in rows:
+        d = dict(row)
+        d["size_display"] = _humanize_size(d.get("size_bytes") or 0)
+        # Ensure created_at is a plain ISO string for JSON serialisation
+        if d.get("created_at") and hasattr(d["created_at"], "isoformat"):
+            d["created_at"] = d["created_at"].isoformat()
+        docs.append(d)
+
+    return docs
+
+
+def get_page_blocks(doc_id: str, page_number: int) -> List[Dict[str, Any]]:
+    """
+    Return all text blocks for a specific page of a document,
+    ordered in reading order (top-to-bottom, left-to-right).
+    Used for citation page-text loading.
+    """
+    conn = get_conn()
+    if conn is None:
+        raise Exception("Database connection failed in get_page_blocks")
+
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT block_id, text, block_type, y1, x1
+                    FROM document_blocks
+                    WHERE doc_id = %s AND page_number = %s
+                    ORDER BY y1, x1
+                    """,
+                    (doc_id, page_number),
+                )
+                rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return [dict(r) for r in rows]

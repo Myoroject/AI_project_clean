@@ -1,6 +1,6 @@
 @echo off
 REM DocMind - Start Both Servers
-REM This script starts the Next.js frontend and Flask backend concurrently
+REM This script starts the Vite frontend and Flask backend concurrently
 
 echo.
 echo Starting DocMind Servers...
@@ -13,14 +13,14 @@ start "Flask Backend" cmd /k "cd /d %~dp0 && flask --app app run --port 5000 --d
 REM Give Flask a moment to start
 timeout /t 2 /nobreak > nul
 
-REM Start Next.js frontend in a new window
-echo Starting Next.js frontend on http://localhost:3000...
-start "Next.js Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
+REM Start Vite frontend in a new window
+echo Starting Vite frontend on http://localhost:5173...
+start "Vite Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
 echo.
 echo Both servers are starting!
 echo.
-echo Frontend (Next.js): http://localhost:3000
+echo Frontend (Vite): http://localhost:5173
 echo Backend (Flask):    http://localhost:5000
 echo.
 echo Tip: Close both terminal windows to stop the servers.

@@ -8,22 +8,32 @@ def create_app():  #defines a factory function that creates and configures a new
     # Secret key: To keep backward-compat with current env var name
     app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY", "dev-secret-key")  # Sets the secret key for the application, which is used for session management and other security-related tasks. It first tries to get the value from the FLASK_SECRET_KEY environment variable, then from SECRET_KEY, and defaults to "dev-secret-key" if neither is set.
 
-    # 20 MB limit
-    app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 # Sets the maximum allowed payload size for incoming requests to 20 megabytes. This helps prevent denial-of-service attacks by limiting the size of uploads.
+    # 20 MB upload limit
+    app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
     # Cookie hardening
     app.config.update(
-        SESSION_COOKIE_HTTPONLY=True, # Prevents JavaScript from accessing the session cookie, mitigating the risk of cross-site scripting (XSS) attacks.
-        SESSION_COOKIE_SAMESITE="Lax", # Helps protect against cross-site request forgery (CSRF) attacks by restricting how cookies are sent with cross-site requests.
-        SESSION_COOKIE_SECURE=not os.environ.get("FLASK_DEBUG", False), # Ensures that cookies are only sent over HTTPS connections when the application is not in debug mode, enhancing security in production environments.
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        # Only require HTTPS for cookies in production (not in local dev)
+        SESSION_COOKIE_SECURE=False,
     )
 
     # CORS configuration for Next.js frontend
     try:
         from flask_cors import CORS
-        CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"], 
-             supports_credentials=True)
-        logging.info("CORS enabled for Next.js frontend")
+        CORS(
+            app,
+            origins=[
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:3001",
+                "http://localhost:5173",   # Vite dev server
+                "http://127.0.0.1:5173",
+            ],
+            supports_credentials=True,
+        )
+        logging.info("CORS enabled")
     except ImportError:
         logging.warning("flask-cors not installed. Run: pip install flask-cors")
 

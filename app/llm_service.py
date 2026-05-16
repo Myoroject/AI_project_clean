@@ -29,7 +29,7 @@ Follow these rules strictly:
 Interpretation 1: ... [1]
 Interpretation 2: ... [2]
 Most likely: ... [1][2]
-8. If the evidence is ambiguous and the question itself is unclear, ask one concise follow-up question instead of guessing.
+8. If the user's question is genuinely vague (e.g., asking for a metric without specifying the year) or the evidence is completely ambiguous, do not answer. Instead, ask exactly one follow-up question that is directly related to the user's query to help them narrow it down.
 """
 
 
@@ -120,38 +120,7 @@ def _truncate_text(text: str, limit: int) -> str:
     return cleaned[: max(0, limit - 16)].rstrip() + "\n...[truncated]"
 
 
-def _suspicious_year_token(query: str) -> str | None:
-    for token in re.findall(r"\b\d{5,}\b", query):
-        if token.startswith(("19", "20")):
-            shortened = token[:4]
-            if 1900 <= int(shortened) <= 2099:
-                return token
-    return None
 
-
-def _looks_unclear(query: str, evidence: Sequence[Any], config: LLMConfig) -> bool:
-    suspicious_year = _suspicious_year_token(query)
-    if suspicious_year:
-        return True
-
-    if not evidence:
-        return False
-
-    top_score = float(getattr(evidence[0], "score", 0.0) or 0.0)
-    second_score = float(getattr(evidence[1], "score", 0.0) or 0.0) if len(evidence) > 1 else 0.0
-    close_scores = abs(top_score - second_score) <= config.clarify_margin
-    low_confidence = top_score < config.clarify_score_threshold
-    source_types = {str(getattr(item, "source_type", "document_block")) for item in evidence[:3]}
-    block_types = {str(getattr(item, "block_type", "paragraph")) for item in evidence[:3]}
-    diversified = len(source_types) > 1 or len(block_types) > 1
-    return low_confidence or (close_scores and diversified)
-
-
-def _deterministic_clarification(query: str) -> str:
-    suspicious_year = _suspicious_year_token(query)
-    if suspicious_year:
-        return f'Did you mean "{query.replace(suspicious_year, suspicious_year[:4], 1)}"?'
-    return "Could you clarify the exact metric, year, or section you want me to answer from the document?"
 
 
 def _build_reasoning_notes(query: str, evidence: Sequence[Any], config: LLMConfig) -> list[str]:
@@ -171,9 +140,6 @@ def _build_reasoning_notes(query: str, evidence: Sequence[Any], config: LLMConfi
     source_types = {str(getattr(item, "source_type", "document_block")) for item in evidence}
     if len(source_types) > 1:
         notes.append("Evidence spans multiple source types; mention any disagreements explicitly.")
-
-    if _suspicious_year_token(query):
-        notes.append("The query contains a suspicious year-like token; ask a clarification question if the answer would otherwise be speculative.")
 
     return notes
 
@@ -259,30 +225,13 @@ def _build_synthesis_prompt(query: str, prepared: Sequence[PreparedEvidence], no
     )
 
 
-def _build_clarification_prompt(query: str, evidence: Sequence[Any], notes: Sequence[str], fallback_question: str) -> str:
-    prompt = [
-        "The user question may be unclear or underspecified.",
-        f"Question: {query}",
-    ]
-    if notes:
-        prompt.append("Notes:\n- " + "\n- ".join(notes))
-    if evidence:
-        prepared = _prepare_evidence(evidence, _load_config())
-        if prepared:
-            prompt.append("Evidence:\n" + _format_evidence_for_prompt(prepared))
-    prompt.append(
-        "Write exactly one short clarification question. Do not answer the original question. "
-        f"If you cannot improve on it, use this question verbatim: {fallback_question}"
-    )
-    return "\n\n".join(prompt)
 
 
-def _extract_text_completion(response_text: str, fallback_question: str | None = None) -> str:
+
+def _extract_text_completion(response_text: str) -> str:
     text = _normalize_whitespace(response_text)
     if not text:
-        return fallback_question or INSUFFICIENT_EVIDENCE_MESSAGE
-    if fallback_question and not text.endswith("?"):
-        return fallback_question
+        return INSUFFICIENT_EVIDENCE_MESSAGE
     return text
 
 
@@ -364,29 +313,6 @@ def synthesize_answer(
     }
 
     if not evidence:
-        if _looks_unclear(query, evidence, config):
-            fallback_question = _deterministic_clarification(query)
-            selected_provider = _build_provider(config, provider)
-            if config.enabled and selected_provider is not None:
-                try:
-                    clarification_text = selected_provider.complete(
-                        model=config.model,
-                        system_prompt=SYSTEM_PROMPT,
-                        user_prompt=_build_clarification_prompt(query, evidence, [], fallback_question),
-                        temperature=config.temperature,
-                        max_completion_tokens=min(config.max_completion_tokens, 128),
-                        timeout_seconds=config.timeout_seconds,
-                    )
-                    result["answer"] = _extract_text_completion(clarification_text, fallback_question)
-                    result["answer_source"] = f"clarification:groq:{config.model}"
-                    return result
-                except ProviderError as exc:
-                    result["llm_error_code"] = exc.code
-                    result["llm_fallback_reason"] = "clarification_provider_failed"
-            result["answer"] = fallback_question
-            result["answer_source"] = "clarification:heuristic"
-            return result
-
         result["answer"] = (
             f"{INSUFFICIENT_EVIDENCE_MESSAGE} I could not find support for that topic in the uploaded document."
         )
@@ -406,27 +332,6 @@ def synthesize_answer(
         return result
 
     notes = _build_reasoning_notes(query, evidence, config)
-    if _looks_unclear(query, evidence, config):
-        fallback_question = _deterministic_clarification(query)
-        try:
-            clarification_text = selected_provider.complete(
-                model=config.model,
-                system_prompt=SYSTEM_PROMPT,
-                user_prompt=_build_clarification_prompt(query, evidence, notes, fallback_question),
-                temperature=config.temperature,
-                max_completion_tokens=min(config.max_completion_tokens, 128),
-                timeout_seconds=config.timeout_seconds,
-            )
-            result["answer"] = _extract_text_completion(clarification_text, fallback_question)
-            result["answer_source"] = f"clarification:groq:{config.model}"
-            return result
-        except ProviderError as exc:
-            logger.warning("Clarification generation failed: %s", exc.code)
-            result["llm_error_code"] = exc.code
-            result["llm_fallback_reason"] = "clarification_provider_failed"
-            result["answer"] = fallback_question
-            result["answer_source"] = "clarification:heuristic"
-            return result
 
     prepared = _prepare_evidence(evidence, config)
     if not prepared:

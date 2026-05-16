@@ -766,3 +766,94 @@ def refresh_document_status(doc_id: str) -> None:
 def get_document_filename(doc_id: str) -> str:
     doc = get_document(doc_id) or {}
     return str(doc.get("filename") or "")
+
+
+def get_document_asset_counts(doc_id: str) -> Dict[str, int]:
+    def _get(conn):
+        counts = {"table_count": 0, "chart_count": 0}
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM document_tables
+                WHERE doc_id = %s
+                """,
+                (doc_id,),
+            )
+            table_row = cur.fetchone() or {}
+            counts["table_count"] = int(table_row.get("total") or 0)
+
+            cur.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM document_visuals
+                WHERE doc_id = %s
+                  AND (
+                    block_type = 'chart'
+                    OR COALESCE(metadata->>'chart_detected', 'false') = 'true'
+                  )
+                """,
+                (doc_id,),
+            )
+            chart_row = cur.fetchone() or {}
+            counts["chart_count"] = int(chart_row.get("total") or 0)
+        return counts
+
+    return _with_conn(_get)
+
+
+def get_document_tables_outline(doc_id: str) -> List[Dict[str, Any]]:
+    def _get(conn):
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    table_id,
+                    page_number,
+                    table_index,
+                    caption_text,
+                    heading_text,
+                    row_count,
+                    column_count,
+                    raw_markdown
+                FROM document_tables
+                WHERE doc_id = %s
+                ORDER BY page_number, table_index
+                """,
+                (doc_id,),
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+
+    return _with_conn(_get)
+
+
+def get_document_visuals_outline(doc_id: str) -> List[Dict[str, Any]]:
+    def _get(conn):
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    visual_id,
+                    page_number,
+                    visual_index,
+                    block_type,
+                    source_kind,
+                    visual_summary,
+                    ocr_text,
+                    metadata
+                FROM document_visuals
+                WHERE doc_id = %s
+                  AND (
+                    COALESCE(source_kind, '') <> 'scanned_page'
+                    OR block_type = 'chart'
+                    OR COALESCE(metadata->>'chart_detected', 'false') = 'true'
+                  )
+                ORDER BY page_number, visual_index
+                """,
+                (doc_id,),
+            )
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]
+
+    return _with_conn(_get)

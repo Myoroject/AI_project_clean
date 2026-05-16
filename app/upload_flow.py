@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Optional
 
-from app.ingest_db import insert_document
+from app.ingest_db import insert_document, insert_document_content
 from app.redis_client import put_doc_binary, put_doc_text
 from app.table_store import enqueue_processing_job, refresh_document_status
 
@@ -44,6 +44,17 @@ def handle_text_upload(
     except Exception as e:
         logger.exception("[upload_flow] put_doc_text FAILED for %s: %s", doc_id, e)
         raise
+
+    # 2b) Persist full text permanently in PostgreSQL (non-fatal fallback store)
+    try:
+        insert_document_content(doc_id, full_text)
+    except Exception as e:
+        # Non-fatal: Redis has the text, PG is just a permanent backup
+        logger.warning(
+            "[upload_flow] insert_document_content failed for %s: %s (non-fatal)",
+            doc_id,
+            e,
+        )
 
     # 3) Insert document metadata (FK anchor) - defaults to status='uploaded'
     try:

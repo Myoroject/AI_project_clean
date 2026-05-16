@@ -407,8 +407,23 @@ def get_doc_text(doc_id: str) -> str:
         ts, txt = tup
         if time.time() - ts > DOC_TTL_SECONDS:
             DOC_STORE.pop(doc_id, None)
-            return ""
-        return txt
+        else:
+            return txt
+
+    # PostgreSQL permanent fallback (survives Redis TTL expiry)
+    try:
+        from app.ingest_db import get_document_content
+        pg_text = get_document_content(doc_id)
+        if pg_text:
+            logger.info("Redis miss for doc %s — served from PostgreSQL, re-warming cache", doc_id)
+            # Best-effort re-warm Redis so subsequent reads are fast
+            try:
+                put_doc_text(doc_id, pg_text)
+            except Exception:
+                logger.debug("Re-warm Redis failed for doc %s (non-fatal)", doc_id)
+            return pg_text
+    except Exception as pg_ex:
+        logger.warning("PostgreSQL fallback failed for doc %s: %s", doc_id, pg_ex)
 
     return ""
 

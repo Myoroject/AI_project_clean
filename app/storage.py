@@ -13,6 +13,12 @@ try:
 except Exception:
     docx = None
 
+# XLSX
+try:
+    import pandas as pd
+except Exception:
+    pd = None
+
 # Images (OCR)
 try:
     import pytesseract
@@ -21,7 +27,7 @@ except Exception:
     pytesseract = None
     Image = None
 
-ALLOWED_EXT = {"pdf", "docx", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "txt", "csv", "md"}
+ALLOWED_EXT = {"pdf", "docx", "xlsx", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "txt", "csv", "md"}
 PREVIEW_LIMIT = int(os.environ.get("PREVIEW_LIMIT", "2000"))
 
 def ext_of(filename: str) -> str:
@@ -49,6 +55,26 @@ def extract_docx_text(file_bytes: bytes) -> str:
         return "\n".join(p.text for p in d.paragraphs)
     except Exception as e:
         return f"[DOCX extract error] {e}"
+
+def extract_xlsx_text(file_bytes: bytes) -> str:
+    if pd is None:
+        return "pandas is not installed; cannot read XLSX yet."
+    try:
+        workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+        sheet_text = []
+        for sheet_name, frame in workbook.items():
+            frame = frame.fillna("")
+            rows = [
+                " | ".join(str(value).strip() for value in row if str(value).strip())
+                for row in frame.itertuples(index=False, name=None)
+            ]
+            rows = [row for row in rows if row]
+            section = [f"[Sheet] {sheet_name}"]
+            section.extend(rows[:200])
+            sheet_text.append("\n".join(section))
+        return "\n\n".join(sheet_text)
+    except Exception as e:
+        return f"[XLSX extract error] {e}"
 
 def extract_pdf_text(file_bytes: bytes) -> str:
     """Extract text from PDF using PyMuPDF (faster than PDFMiner)."""
@@ -97,4 +123,3 @@ def human_size(num_bytes: int) -> str:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024
     return f"{num_bytes:.1f} PB"
-
